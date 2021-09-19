@@ -1,0 +1,168 @@
+Resources:
+  ApiGatewayRestApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: Candidate-API
+      ApiKeySourceType: HEADER
+      Description: API Gateway for the Candidate Stubs Lambda Function
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  ApiGatewayResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt ApiGatewayRestApi.RootResourceId
+      PathPart: 'lambda'
+      RestApiId: !Ref ApiGatewayRestApi
+
+  ApiGatewayMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      ApiKeyRequired: false
+      AuthorizationType: NONE
+      HttpMethod: GET
+      Integration:
+        ConnectionType: INTERNET
+        Credentials: !GetAtt ApiGatewayIamRole.Arn
+        IntegrationHttpMethod: POST
+        PassthroughBehavior: WHEN_NO_MATCH
+        TimeoutInMillis: 29000
+        Type: AWS_PROXY
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CandidateFunction.Arn}/invocations'
+      OperationName: 'lambda'
+      ResourceId: !Ref ApiGatewayResource
+      RestApiId: !Ref ApiGatewayRestApi
+
+  ApiGatewayStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      DeploymentId: !Ref ApiGatewayDeployment
+      RestApiId: !Ref ApiGatewayRestApi
+      StageName: 'v0'
+
+  ApiGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: ApiGatewayMethod
+    Properties:
+      Description: Lambda API Deployment
+      RestApiId: !Ref ApiGatewayRestApi
+
+  ApiGatewayIamRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: ''
+            Effect: 'Allow'
+            Principal:
+              Service:
+                - apigateway.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: '/'
+      Policies:
+        - PolicyName: LambdaAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action: 'lambda:*'
+                Resource: !GetAtt CandidateFunction.Arn
+
+  CandidateFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Candidate stubs API
+      FunctionName: candidateStubsAPI
+      Code:
+        S3Bucket: ic-infra-general
+        S3Key: candidate_stubs_lambda_code.zip
+      Handler: index.handler
+      MemorySize: 128
+      Runtime: nodejs12.x
+      Role: !GetAtt LambdaIamRole.Arn
+      Tags:
+        - Key: Name
+          Value: CandidateStubsAPI
+        - Key: division
+          Value: digital
+        - Key: department
+          Value: platform
+        - Key: environment
+          Value: production
+        - Key: project
+          Value: misc
+        - Key: team
+          Value: ic-infra
+
+  LambdaIamRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: '/'
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:*
+                Resource: arn:aws:logs:*:*:*
+
+  CandidateDomainName:
+    Type: AWS::ApiGateway::DomainName
+    Properties:
+      CertificateArn: arn:aws:acm:us-east-1:273987626044:certificate/35f8ff89-cab1-46a4-84cd-c5fb1bc8b93a
+      DomainName: candidate.ic-infra.com
+      EndpointConfiguration:
+        Types:
+          - EDGE
+
+  BasePathMapping:
+    Type: AWS::ApiGateway::BasePathMapping
+    Properties:
+      BasePath: lambda
+      DomainName: !Ref CandidateDomainName
+      RestApiId: !Ref ApiGatewayRestApi
+      Stage: v0
+
+  CandidateRecordSet:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: Z10449662BPGB0WAV2U3H
+      Name: candidate.ic-infra.com
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt CandidateDomainName.DistributionDomainName
+        HostedZoneId: !GetAtt CandidateDomainName.DistributionHostedZoneId
+
+Outputs:
+  ApiGatewayInvocationURL:
+    Description: The API Gateway URL
+    Value:
+      Fn::Join:
+        - ''
+        - - https://
+          - Ref: ApiGatewayRestApi
+          - .execute-api.
+          - !Ref AWS::Region
+          - .amazonaws.com/v0/lambda
+  APIUrl:
+    Value:
+      Fn::Join:
+        - ''
+        - - !Ref CandidateRecordSet
+          - '/lambda'
+    Export:
+      Name: 'Candidate-API-URL'
